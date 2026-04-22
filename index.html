@@ -117,6 +117,16 @@
             };
 
             let currentCmd = 'x';
+            let isVideoPlaying = false; // 영상 재생 중 여부
+
+            // 영상이 끝나면 음성인식 재개
+            videoElement.addEventListener('ended', () => {
+                isVideoPlaying = false;
+                if (shouldRestartAfterVideo) {
+                    speechStatusEl && (speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!');
+                    try { recognition && recognition.start(); } catch(e) {}
+                }
+            });
 
             function executeCommand(cmd) {
                 if (currentCmd === cmd) return;
@@ -124,73 +134,67 @@
 
                 const targetVideo = videoMap[cmd];
                 if (targetVideo) {
+                    const isLooping = targetVideo !== "정지.mp4";
+
+                    // 음성인식 중이라면 영상 재생 전에 멈춤
+                    if (isRecognizing) {
+                        shouldRestartAfterVideo = !isLooping; // 루프 영상(정지.mp4 아닌것)은 ended 안 오므로 재개 안함
+                        try { recognition.stop(); } catch(e) {}
+                        speechStatusEl && (speechStatusEl.textContent = '영상 재생 중... 음성인식 일시정지');
+                    } else {
+                        shouldRestartAfterVideo = false;
+                    }
+
                     videoElement.src = targetVideo;
                     videoElement.muted = false;
-                    videoElement.loop = targetVideo !== "정지.mp4";
+                    videoElement.loop = isLooping;
                     videoElement.play();
+                    isVideoPlaying = true;
                 }
 
                 if (isConnected) sendCommand(cmd);
+
+                // 버튼 시각 효과: 현재 활성 버튼만 강조
+                document.querySelectorAll('.pad button[data-cmd]').forEach(b => b.classList.remove('active-command'));
+                const activeBtn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
+                if (activeBtn) activeBtn.classList.add('active-command');
             }
 
-            // 1. 마우스/터치 이벤트 연결
+            // 음성인식 재개 여부 플래그 (recognition 선언 전이므로 var로 호이스팅)
+            var shouldRestartAfterVideo = false;
+
+            // 1. 마우스/터치 이벤트 연결 (버튼을 떼도 영상 유지)
             const pads = document.querySelectorAll('.pad button[data-cmd]');
             pads.forEach(btn => {
                 const cmd = btn.dataset.cmd;
-                const startEvt = (e) => { 
-                    e.preventDefault(); executeCommand(cmd); btn.classList.add('active-command'); 
+                const startEvt = (e) => {
+                    e.preventDefault();
+                    executeCommand(cmd);
                     if (navigator.vibrate) navigator.vibrate(20);
                 };
-                const stopEvt = (e) => { 
-                    e.preventDefault(); executeCommand('x'); btn.classList.remove('active-command'); 
-                };
 
-                btn.addEventListener('mousedown', startEvt); btn.addEventListener('mouseup', stopEvt); btn.addEventListener('mouseleave', stopEvt);
-                btn.addEventListener('touchstart', startEvt, {passive: false}); btn.addEventListener('touchend', stopEvt); btn.addEventListener('touchcancel', stopEvt);
+                btn.addEventListener('mousedown', startEvt);
+                btn.addEventListener('touchstart', startEvt, {passive: false});
             });
 
-            // 🌟 2. 키보드 방향키 및 WASD 이벤트 추가 🌟
+            // 2. 키보드 방향키 및 WASD 이벤트 (키를 떼도 영상 유지)
             const keyMap = {
                 'ArrowUp': 'w', 'w': 'w', 'W': 'w',
                 'ArrowDown': 's', 's': 's', 'S': 's',
                 'ArrowLeft': 'a', 'a': 'a', 'A': 'a',
                 'ArrowRight': 'd', 'd': 'd', 'D': 'd',
-                ' ': 'x', 'Escape': 'x', 'x': 'x', 'X': 'x' // 스페이스바나 X 누르면 정지
+                ' ': 'x', 'Escape': 'x', 'x': 'x', 'X': 'x'
             };
 
-            let activeKeyCmd = null;
-
             document.addEventListener('keydown', (e) => {
-                if (e.repeat) return; // 꾹 누르고 있을 때 중복 실행 방지
+                if (e.repeat) return;
                 
                 const cmd = keyMap[e.key];
                 if (cmd) {
-                    // 기본 스크롤 방지 (방향키나 스페이스바 누를 때 화면이 움직이는 것 방지)
                     if(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
                         e.preventDefault();
                     }
                     executeCommand(cmd);
-                    activeKeyCmd = cmd;
-                    
-                    // 해당 버튼에 시각적 효과 (빨간색으로 빛나게)
-                    const btn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
-                    if (btn) btn.classList.add('active-command');
-                }
-            });
-
-            document.addEventListener('keyup', (e) => {
-                const cmd = keyMap[e.key];
-                // 눌렀던 키를 떼었을 때만 '정지' 실행
-                if (cmd && cmd === activeKeyCmd) {
-                    executeCommand('x');
-                    activeKeyCmd = null;
-                    
-                    const btn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
-                    if (btn) btn.classList.remove('active-command');
-                } else if (cmd === 'x') {
-                    // X버튼이나 스페이스바 시각적 효과 제거
-                    const btn = document.querySelector(`.pad button[data-cmd="x"]`);
-                    if (btn) btn.classList.remove('active-command');
                 }
             });
 
@@ -257,6 +261,9 @@
                 recognition.onerror = (e) => { if (e.error !== 'aborted' && e.error !== 'no-speech') { shouldRestart = false; isRecognizing = false; speechStatusEl.textContent = '오류: ' + e.error; btnSpeech.textContent = '음성인식 시작'; btnSpeech.classList.remove('recording'); } };
 
                 recognition.onresult = (event) => {
+                    // 영상 재생 중이면 음성 명령 무시
+                    if (isVideoPlaying) return;
+
                     let interimTranscript = '';
                     for (let i = event.resultIndex; i < event.results.length; ++i) {
                         const transcript = event.results[i][0].transcript;
@@ -272,8 +279,6 @@
 
                             if (command) {
                                 executeCommand(command);
-                                const button = document.querySelector(`.pad button[data-cmd="${command}"]`);
-                                if (button) { button.classList.add('active-command'); setTimeout(() => button.classList.remove('active-command'), 500); }
                             }
                         } else { interimTranscript += transcript; }
                     }
