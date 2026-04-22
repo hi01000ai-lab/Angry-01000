@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>세로형 영상 테스트 (전진.mp4)</title>
+    <title>영상 리모컨 테스트</title>
     <style>
         body, html {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
-            background-color: #000; 
+            background-color: #000;
             overflow: hidden; 
         }
 
@@ -29,60 +29,90 @@
             object-fit: cover; 
         }
 
-        #nextBtn {
+        /* 컨트롤러 (버튼들) 그룹 영역 */
+        .controls {
             position: absolute;
-            bottom: 50px;
-            right: 20px;
-            padding: 12px 24px;
-            background-color: rgba(255, 255, 255, 0.2);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            border-radius: 30px;
-            font-size: 16px;
-            backdrop-filter: blur(5px); 
-            cursor: pointer;
+            bottom: 40px; 
+            display: flex;
+            flex-direction: column; 
+            align-items: center;
+            gap: 15px; 
             z-index: 10;
         }
 
-        #nextBtn:active {
-            background-color: rgba(255, 255, 255, 0.4);
+        /* 좌, 정지, 우 버튼을 가로로 배치 */
+        .horizontal-btns {
+            display: flex;
+            gap: 20px;
+        }
+
+        button {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3); 
+        }
+
+        button:active {
+            background-color: rgba(255, 255, 255, 0.6);
+            transform: scale(0.95);
         }
     </style>
 </head>
 <body>
 
     <div class="video-container">
-        <video id="mainVideo" src="전진.mp4" autoplay muted loop playsinline></video>
+        <video id="mainVideo" src="정지.mp4" autoplay muted playsinline></video>
         
-        <button id="nextBtn">다음 영상 ➔</button>
+        <div class="controls">
+            <button id="btnForward">전진</button>
+            <div class="horizontal-btns">
+                <button id="btnLeft">좌</button>
+                <button id="btnStop">정지</button>
+                <button id="btnRight">우</button>
+            </div>
+            <button id="btnBackward">후진</button>
+        </div>
     </div>
 
     <script>
-        // 테스트를 위해 전진.mp4 파일 하나만 배열에 3번 넣었습니다.
-        // 나중에 다른 영상이 생기면 이 부분을 수정하시면 됩니다.
-        const videos = [
-            "전진.mp4",
-            "전진.mp4",
-            "전진.mp4"
-        ];
-        
-        let currentIndex = 0; 
         const videoElement = document.getElementById("mainVideo");
-        const nextBtn = document.getElementById("nextBtn");
 
-        nextBtn.addEventListener("click", () => {
-            // 다음 인덱스로 이동
-            currentIndex = (currentIndex + 1) % videos.length;
+        function changeVideo(videoName) {
+            // 현재 영상과 누른 버튼의 영상이 같으면 무시
+            const currentVideo = videoElement.getAttribute("src");
+            if (currentVideo === videoName) return;
+
+            // 영상 파일 교체
+            videoElement.src = videoName;
             
-            // 영상 소스 교체 (지금은 모두 전진.mp4로 동일하게 작동)
-            videoElement.src = videos[currentIndex];
-            
-            // 버튼 클릭 후에는 소리가 나오도록 음소거 해제
+            // 첫 상호작용 이후 소리 켜기
             videoElement.muted = false; 
+
+            // 🔥 추가된 핵심 로직: 정지면 반복 끄고, 아니면 반복 켜기
+            if (videoName === "정지.mp4") {
+                videoElement.loop = false; // 정지 영상은 한 번만 재생 후 멈춤
+            } else {
+                videoElement.loop = true;  // 방향 영상은 계속 반복 재생
+            }
             
-            // 영상 처음부터 다시 재생
+            // 영상 재생
             videoElement.play();
-        });
+        }
+
+        // 버튼 클릭 이벤트
+        document.getElementById("btnForward").addEventListener("click", () => changeVideo("전진.mp4"));
+        document.getElementById("btnBackward").addEventListener("click", () => changeVideo("후진.mp4"));
+        document.getElementById("btnLeft").addEventListener("click", () => changeVideo("좌회전.mp4"));
+        document.getElementById("btnRight").addEventListener("click", () => changeVideo("우회전.mp4"));
+        document.getElementById("btnStop").addEventListener("click", () => changeVideo("정지.mp4"));
     </script>
 </body>
 </html>
