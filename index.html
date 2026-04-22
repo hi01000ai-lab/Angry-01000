@@ -114,10 +114,12 @@
             // 전역 변수들
             let recognition = null;
             let isRecognizing = false;
-            let isSpeechIntended = false; // 사용자가 마이크를 켜두길 원하는지 여부
+            let isSpeechIntended = false; 
             let finalTranscriptGlobal = '';
             let restartTimer = null;
-            let currentCmd = 'x';
+            let actionTimeout = null;
+            let isActionPlaying = false; // 4초 동안 중복 명령 차단용 플래그
+            let currentCmd = null;
 
             const videoMap = {
                 'w': '전진.mp4', 's': '후진.mp4',
@@ -127,43 +129,45 @@
             const speechStatusEl = document.getElementById('speechStatus');
 
             function executeCommand(cmd) {
-                if (currentCmd === cmd) return;
+                // 이미 4초 타이머가 돌고 있는 중복된 명령어는 영상 버벅거림 방지를 위해 무시
+                if (currentCmd === cmd && isActionPlaying) return; 
                 currentCmd = cmd;
 
                 const targetVideo = videoMap[cmd];
                 if (targetVideo) {
                     videoElement.src = targetVideo;
                     videoElement.muted = false;
-                    videoElement.loop = (cmd === 'x'); // 정지 영상만 반복, 나머지는 1회 재생
-                    
-                    // 동영상 재생 로직과 음성인식 충돌 방지
-                    if (cmd !== 'x' && isRecognizing && recognition) {
-                        // 액션 동영상이 시작되면 마이크를 잠시 끔 (동영상 소리 하울링 방지)
-                        recognition.stop();
-                        speechStatusEl.textContent = '동영상 재생 중... (마이크 일시정지)';
-                    } else if (cmd === 'x' && isSpeechIntended && !isRecognizing && recognition) {
-                        // 수동으로 정지(x)를 눌렀거나 영상이 끝났을 때 마이크 다시 켜기
-                        speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!';
-                        try { recognition.start(); } catch(e) {}
-                    }
-
-                    videoElement.play().catch(() => {}); // 에러 방지
+                    videoElement.loop = false; // 🌟 무조건 1번만 재생되도록 설정
+                    videoElement.play().catch(() => {}); 
                 }
 
+                // 🌟 마이크로비트로 명령 전송 (그대로 유지)
                 if (isConnected) sendCommand(cmd);
 
-                // 현재 활성화된 명령어 불빛 효과
+                // 버튼 불빛 시각 효과
                 document.querySelectorAll('.pad button').forEach(b => b.classList.remove('active-command'));
                 const activeBtn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
                 if (activeBtn) activeBtn.classList.add('active-command');
-            }
 
-            // 동영상이 끝났을 때의 이벤트 (1회 재생 후 자동으로 정지)
-            videoElement.addEventListener('ended', () => {
-                if (currentCmd !== 'x') {
-                    executeCommand('x'); // 동영상이 끝나면 '정지' 명령으로 되돌림
+                // 🌟 4초 동안 마이크 음성 인식 차단 로직 🌟
+                isActionPlaying = true;
+                clearTimeout(actionTimeout);
+
+                if (isRecognizing && recognition) {
+                    recognition.stop(); // 영상 소리가 들어가지 않도록 마이크 강제 종료
+                    speechStatusEl.textContent = '동영상 재생 중 (4초간 마이크 일시정지)';
                 }
-            });
+
+                // 정확히 4초(4000ms) 후에 마이크 다시 켜기
+                actionTimeout = setTimeout(() => {
+                    isActionPlaying = false;
+                    
+                    if (isSpeechIntended && !isRecognizing && recognition) {
+                        speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!';
+                        try { recognition.start(); } catch(e) {}
+                    }
+                }, 4000); 
+            }
 
             // 1. 마우스/터치 이벤트 연결
             const pads = document.querySelectorAll('.pad button[data-cmd]');
@@ -254,7 +258,7 @@
 
                 recognition.onstart = () => { 
                     isRecognizing = true; 
-                    if (currentCmd === 'x') {
+                    if (!isActionPlaying) {
                         speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!'; 
                     }
                     btnSpeech.textContent = '음성인식 중지'; 
@@ -265,16 +269,13 @@
                     isRecognizing = false;
                     
                     if (isSpeechIntended) {
-                        if (currentCmd !== 'x') {
-                            // 영상 재생 때문에 의도적으로 끈 상태
-                            speechStatusEl.textContent = '동영상 재생 중... (마이크 일시정지)';
+                        if (isActionPlaying) {
+                            speechStatusEl.textContent = '동영상 재생 중 (4초간 마이크 일시정지)';
                         } else {
-                            // 예기치 않게 끊어졌으나, 사용자가 켜두길 원할 때 자동 재시작
                             speechStatusEl.textContent = '재연결 중...'; 
                             restartTimer = setTimeout(() => { try { recognition.start(); } catch(e) {} }, 300); 
                         }
                     } else {
-                        // 사용자가 완전히 종료했을 때
                         speechStatusEl.textContent = '음성인식 대기 중'; 
                         btnSpeech.textContent = '음성인식 시작'; 
                         btnSpeech.classList.remove('recording'); 
@@ -283,7 +284,7 @@
 
                 recognition.onerror = (e) => { 
                     if (e.error !== 'aborted' && e.error !== 'no-speech') { 
-                        if (currentCmd === 'x') {
+                        if (!isActionPlaying) {
                             speechStatusEl.textContent = '오류: ' + e.error; 
                         }
                     } 
