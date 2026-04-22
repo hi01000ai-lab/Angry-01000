@@ -111,22 +111,20 @@
         document.addEventListener('DOMContentLoaded', () => {
             const videoElement = document.getElementById("mainVideo");
             
+            // 전역 변수들
+            let recognition = null;
+            let isRecognizing = false;
+            let isSpeechIntended = false; // 사용자가 마이크를 켜두길 원하는지 여부
+            let finalTranscriptGlobal = '';
+            let restartTimer = null;
+            let currentCmd = 'x';
+
             const videoMap = {
                 'w': '전진.mp4', 's': '후진.mp4',
                 'a': '좌회전.mp4', 'd': '우회전.mp4', 'x': '정지.mp4'
             };
-
-            let currentCmd = 'x';
-            let isVideoPlaying = false; // 영상 재생 중 여부
-
-            // 영상이 끝나면 음성인식 재개
-            videoElement.addEventListener('ended', () => {
-                isVideoPlaying = false;
-                if (shouldRestartAfterVideo) {
-                    speechStatusEl && (speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!');
-                    try { recognition && recognition.start(); } catch(e) {}
-                }
-            });
+            
+            const speechStatusEl = document.getElementById('speechStatus');
 
             function executeCommand(cmd) {
                 if (currentCmd === cmd) return;
@@ -134,61 +132,63 @@
 
                 const targetVideo = videoMap[cmd];
                 if (targetVideo) {
-                    const isLooping = targetVideo !== "정지.mp4";
-
-                    // 음성인식 중이라면 영상 재생 전에 멈춤
-                    if (isRecognizing) {
-                        shouldRestartAfterVideo = !isLooping; // 루프 영상(정지.mp4 아닌것)은 ended 안 오므로 재개 안함
-                        try { recognition.stop(); } catch(e) {}
-                        speechStatusEl && (speechStatusEl.textContent = '영상 재생 중... 음성인식 일시정지');
-                    } else {
-                        shouldRestartAfterVideo = false;
-                    }
-
                     videoElement.src = targetVideo;
                     videoElement.muted = false;
-                    videoElement.loop = isLooping;
-                    videoElement.play();
-                    isVideoPlaying = true;
+                    videoElement.loop = (cmd === 'x'); // 정지 영상만 반복, 나머지는 1회 재생
+                    
+                    // 동영상 재생 로직과 음성인식 충돌 방지
+                    if (cmd !== 'x' && isRecognizing && recognition) {
+                        // 액션 동영상이 시작되면 마이크를 잠시 끔 (동영상 소리 하울링 방지)
+                        recognition.stop();
+                        speechStatusEl.textContent = '동영상 재생 중... (마이크 일시정지)';
+                    } else if (cmd === 'x' && isSpeechIntended && !isRecognizing && recognition) {
+                        // 수동으로 정지(x)를 눌렀거나 영상이 끝났을 때 마이크 다시 켜기
+                        speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!';
+                        try { recognition.start(); } catch(e) {}
+                    }
+
+                    videoElement.play().catch(() => {}); // 에러 방지
                 }
 
                 if (isConnected) sendCommand(cmd);
 
-                // 버튼 시각 효과: 현재 활성 버튼만 강조
-                document.querySelectorAll('.pad button[data-cmd]').forEach(b => b.classList.remove('active-command'));
+                // 현재 활성화된 명령어 불빛 효과
+                document.querySelectorAll('.pad button').forEach(b => b.classList.remove('active-command'));
                 const activeBtn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
                 if (activeBtn) activeBtn.classList.add('active-command');
             }
 
-            // 음성인식 재개 여부 플래그 (recognition 선언 전이므로 var로 호이스팅)
-            var shouldRestartAfterVideo = false;
+            // 동영상이 끝났을 때의 이벤트 (1회 재생 후 자동으로 정지)
+            videoElement.addEventListener('ended', () => {
+                if (currentCmd !== 'x') {
+                    executeCommand('x'); // 동영상이 끝나면 '정지' 명령으로 되돌림
+                }
+            });
 
-            // 1. 마우스/터치 이벤트 연결 (버튼을 떼도 영상 유지)
+            // 1. 마우스/터치 이벤트 연결
             const pads = document.querySelectorAll('.pad button[data-cmd]');
             pads.forEach(btn => {
                 const cmd = btn.dataset.cmd;
-                const startEvt = (e) => {
-                    e.preventDefault();
-                    executeCommand(cmd);
+                const startEvt = (e) => { 
+                    e.preventDefault(); 
+                    executeCommand(cmd); 
                     if (navigator.vibrate) navigator.vibrate(20);
                 };
-
                 btn.addEventListener('mousedown', startEvt);
-                btn.addEventListener('touchstart', startEvt, {passive: false});
+                btn.addEventListener('touchstart', startEvt, {passive: false}); 
             });
 
-            // 2. 키보드 방향키 및 WASD 이벤트 (키를 떼도 영상 유지)
+            // 2. 키보드 방향키 및 WASD 이벤트
             const keyMap = {
                 'ArrowUp': 'w', 'w': 'w', 'W': 'w',
                 'ArrowDown': 's', 's': 's', 'S': 's',
                 'ArrowLeft': 'a', 'a': 'a', 'A': 'a',
                 'ArrowRight': 'd', 'd': 'd', 'D': 'd',
-                ' ': 'x', 'Escape': 'x', 'x': 'x', 'X': 'x'
+                ' ': 'x', 'Escape': 'x', 'x': 'x', 'X': 'x' 
             };
 
             document.addEventListener('keydown', (e) => {
                 if (e.repeat) return;
-                
                 const cmd = keyMap[e.key];
                 if (cmd) {
                     if(['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
@@ -198,20 +198,22 @@
                 }
             });
 
-
             // 3. 블루투스 통신 로직
             const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
             let device, txChar, rxChar;
             window.isConnected = false;
 
-            const statusEl = document.getElementById('status'), speechStatusEl = document.getElementById('speechStatus');
+            const statusEl = document.getElementById('status');
             const sentEl = document.getElementById('sent'), receivedEl = document.getElementById('received'), transcriptEl = document.getElementById('transcript');
             const btnConnect = document.getElementById('connectButton'), btnDisc = document.getElementById('disconnectButton'), btnSpeech = document.getElementById('speechButton');
 
             function updateConnectionState(connected) {
                 isConnected = connected; btnConnect.disabled = connected; btnDisc.disabled = !connected;
                 statusEl.textContent = connected ? '디바이스 연결됨' : '디바이스 연결 해제됨';
-                if (!connected && isRecognizing) recognition.stop();
+                if (!connected && isRecognizing && recognition) {
+                    isSpeechIntended = false;
+                    recognition.stop();
+                }
             }
 
             btnConnect.addEventListener('click', async () => {
@@ -244,26 +246,50 @@
 
             // 4. 음성 인식 로직
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            let recognition, isRecognizing = false, finalTranscriptGlobal = '';
 
             if (SpeechRecognition) {
                 btnSpeech.disabled = false;
                 recognition = new SpeechRecognition();
                 recognition.lang = 'ko-KR'; recognition.continuous = true; recognition.interimResults = true;
-                let shouldRestart = false, restartTimer = null;
 
-                recognition.onstart = () => { isRecognizing = true; speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!'; btnSpeech.textContent = '음성인식 중지'; btnSpeech.classList.add('recording'); };
+                recognition.onstart = () => { 
+                    isRecognizing = true; 
+                    if (currentCmd === 'x') {
+                        speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!'; 
+                    }
+                    btnSpeech.textContent = '음성인식 중지'; 
+                    btnSpeech.classList.add('recording'); 
+                };
+
                 recognition.onend = () => {
                     isRecognizing = false;
-                    if (shouldRestart) { speechStatusEl.textContent = '재연결 중...'; restartTimer = setTimeout(() => { try { recognition.start(); } catch(e) {} }, 300); } 
-                    else { speechStatusEl.textContent = '음성인식 대기 중'; btnSpeech.textContent = '음성인식 시작'; btnSpeech.classList.remove('recording'); }
+                    
+                    if (isSpeechIntended) {
+                        if (currentCmd !== 'x') {
+                            // 영상 재생 때문에 의도적으로 끈 상태
+                            speechStatusEl.textContent = '동영상 재생 중... (마이크 일시정지)';
+                        } else {
+                            // 예기치 않게 끊어졌으나, 사용자가 켜두길 원할 때 자동 재시작
+                            speechStatusEl.textContent = '재연결 중...'; 
+                            restartTimer = setTimeout(() => { try { recognition.start(); } catch(e) {} }, 300); 
+                        }
+                    } else {
+                        // 사용자가 완전히 종료했을 때
+                        speechStatusEl.textContent = '음성인식 대기 중'; 
+                        btnSpeech.textContent = '음성인식 시작'; 
+                        btnSpeech.classList.remove('recording'); 
+                    }
                 };
-                recognition.onerror = (e) => { if (e.error !== 'aborted' && e.error !== 'no-speech') { shouldRestart = false; isRecognizing = false; speechStatusEl.textContent = '오류: ' + e.error; btnSpeech.textContent = '음성인식 시작'; btnSpeech.classList.remove('recording'); } };
+
+                recognition.onerror = (e) => { 
+                    if (e.error !== 'aborted' && e.error !== 'no-speech') { 
+                        if (currentCmd === 'x') {
+                            speechStatusEl.textContent = '오류: ' + e.error; 
+                        }
+                    } 
+                };
 
                 recognition.onresult = (event) => {
-                    // 영상 재생 중이면 음성 명령 무시
-                    if (isVideoPlaying) return;
-
                     let interimTranscript = '';
                     for (let i = event.resultIndex; i < event.results.length; ++i) {
                         const transcript = event.results[i][0].transcript;
@@ -287,8 +313,22 @@
                 };
 
                 btnSpeech.addEventListener('click', () => {
-                    if (isRecognizing) { shouldRestart = false; clearTimeout(restartTimer); recognition.stop(); } 
-                    else { shouldRestart = true; finalTranscriptGlobal = ''; transcriptEl.innerHTML = '<span style="color:#666;">듣고 있습니다...</span>'; try { recognition.start(); } catch(e) {} }
+                    if (isSpeechIntended) { 
+                        isSpeechIntended = false; 
+                        clearTimeout(restartTimer); 
+                        if (isRecognizing) recognition.stop();
+                        else {
+                            speechStatusEl.textContent = '음성인식 대기 중'; 
+                            btnSpeech.textContent = '음성인식 시작'; 
+                            btnSpeech.classList.remove('recording'); 
+                        }
+                    } 
+                    else { 
+                        isSpeechIntended = true; 
+                        finalTranscriptGlobal = ''; 
+                        transcriptEl.innerHTML = '<span style="color:#666;">듣고 있습니다...</span>'; 
+                        try { recognition.start(); } catch(e) {} 
+                    }
                 });
             } else {
                 transcriptEl.innerHTML = '<span style="color:#ff4444;">이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.</span>';
