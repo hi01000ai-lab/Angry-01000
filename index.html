@@ -110,66 +110,67 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const videoElement = document.getElementById("mainVideo");
+            videoElement.loop = false;
+
+            const speechStatusEl = document.getElementById('speechStatus');
             
-            // 전역 변수들
             let recognition = null;
             let isRecognizing = false;
             let isSpeechIntended = false; 
             let finalTranscriptGlobal = '';
             let restartTimer = null;
             let actionTimeout = null;
-            let isActionPlaying = false; // 4초 동안 중복 명령 차단용 플래그
+            let isActionPlaying = false; 
             let currentCmd = null;
+            
+            // 🌟 새로 추가된 변수: 마이크는 켜두되 명령만 무시하는 모드
+            let isListeningPaused = false; 
 
             const videoMap = {
                 'w': '전진.mp4', 's': '후진.mp4',
                 'a': '좌회전.mp4', 'd': '우회전.mp4', 'x': '정지.mp4'
             };
-            
-            const speechStatusEl = document.getElementById('speechStatus');
 
             function executeCommand(cmd) {
-                // 이미 4초 타이머가 돌고 있는 중복된 명령어는 영상 버벅거림 방지를 위해 무시
-                if (currentCmd === cmd && isActionPlaying) return; 
+                if (isActionPlaying) return;
+                if (currentCmd === cmd) return;
+
                 currentCmd = cmd;
+                isActionPlaying = true; 
 
                 const targetVideo = videoMap[cmd];
                 if (targetVideo) {
                     videoElement.src = targetVideo;
                     videoElement.muted = false;
-                    videoElement.loop = false; // 🌟 무조건 1번만 재생되도록 설정
-                    videoElement.play().catch(() => {}); 
+                    videoElement.loop = false; 
+                    videoElement.play().catch(e => console.log("재생 오류:", e));
                 }
 
-                // 🌟 마이크로비트로 명령 전송 (그대로 유지)
                 if (isConnected) sendCommand(cmd);
 
-                // 버튼 불빛 시각 효과
                 document.querySelectorAll('.pad button').forEach(b => b.classList.remove('active-command'));
                 const activeBtn = document.querySelector(`.pad button[data-cmd="${cmd}"]`);
                 if (activeBtn) activeBtn.classList.add('active-command');
 
-                // 🌟 4초 동안 마이크 음성 인식 차단 로직 🌟
-                isActionPlaying = true;
-                clearTimeout(actionTimeout);
-
-                if (isRecognizing && recognition) {
-                    recognition.stop(); // 영상 소리가 들어가지 않도록 마이크 강제 종료
-                    speechStatusEl.textContent = '동영상 재생 중 (4초간 마이크 일시정지)';
+                // 🌟 변경됨: 마이크를 끄지 않고 무시(Pause) 모드로 전환
+                if (isRecognizing) {
+                    isListeningPaused = true;
+                    speechStatusEl.textContent = '명령 수행 중... (6초간 소리 무시)';
                 }
 
-                // 정확히 4초(4000ms) 후에 마이크 다시 켜기
+                clearTimeout(actionTimeout);
                 actionTimeout = setTimeout(() => {
-                    isActionPlaying = false;
-                    
-                    if (isSpeechIntended && !isRecognizing && recognition) {
+                    isActionPlaying = false; 
+                    isListeningPaused = false; // 6초 후 무시 모드 해제 (귀 다시 열기)
+
+                    if (isRecognizing && isSpeechIntended) {
                         speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!';
-                        try { recognition.start(); } catch(e) {}
+                    } else if (!isSpeechIntended) {
+                        speechStatusEl.textContent = '음성인식 대기 중';
                     }
-                }, 4000); 
+                }, 6000); 
             }
 
-            // 1. 마우스/터치 이벤트 연결
             const pads = document.querySelectorAll('.pad button[data-cmd]');
             pads.forEach(btn => {
                 const cmd = btn.dataset.cmd;
@@ -182,7 +183,6 @@
                 btn.addEventListener('touchstart', startEvt, {passive: false}); 
             });
 
-            // 2. 키보드 방향키 및 WASD 이벤트
             const keyMap = {
                 'ArrowUp': 'w', 'w': 'w', 'W': 'w',
                 'ArrowDown': 's', 's': 's', 'S': 's',
@@ -202,11 +202,9 @@
                 }
             });
 
-            // 3. 블루투스 통신 로직
             const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
             let device, txChar, rxChar;
             window.isConnected = false;
-
             const statusEl = document.getElementById('status');
             const sentEl = document.getElementById('sent'), receivedEl = document.getElementById('received'), transcriptEl = document.getElementById('transcript');
             const btnConnect = document.getElementById('connectButton'), btnDisc = document.getElementById('disconnectButton'), btnSpeech = document.getElementById('speechButton');
@@ -248,7 +246,6 @@
                 } catch (e) { statusEl.textContent = 'TX Error: ' + e.message; }
             }
 
-            // 4. 음성 인식 로직
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
             if (SpeechRecognition) {
@@ -258,23 +255,16 @@
 
                 recognition.onstart = () => { 
                     isRecognizing = true; 
-                    if (!isActionPlaying) {
-                        speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!'; 
-                    }
+                    if (!isActionPlaying) speechStatusEl.textContent = '듣고 있습니다... 명령을 말해보세요!'; 
                     btnSpeech.textContent = '음성인식 중지'; 
                     btnSpeech.classList.add('recording'); 
                 };
 
                 recognition.onend = () => {
                     isRecognizing = false;
-                    
                     if (isSpeechIntended) {
-                        if (isActionPlaying) {
-                            speechStatusEl.textContent = '동영상 재생 중 (4초간 마이크 일시정지)';
-                        } else {
-                            speechStatusEl.textContent = '재연결 중...'; 
-                            restartTimer = setTimeout(() => { try { recognition.start(); } catch(e) {} }, 300); 
-                        }
+                        // Web Speech API가 일정 시간 조용해서 자동으로 끊어졌을 때 재시작
+                        restartTimer = setTimeout(() => { try { recognition.start(); } catch(e) {} }, 300); 
                     } else {
                         speechStatusEl.textContent = '음성인식 대기 중'; 
                         btnSpeech.textContent = '음성인식 시작'; 
@@ -291,6 +281,9 @@
                 };
 
                 recognition.onresult = (event) => {
+                    // 🌟 변경됨: 무시 모드일 때는 영상에서 나는 소리가 텍스트로 찍히거나 명령을 실행하지 않도록 바로 차단
+                    if (isListeningPaused) return; 
+
                     let interimTranscript = '';
                     for (let i = event.resultIndex; i < event.results.length; ++i) {
                         const transcript = event.results[i][0].transcript;
@@ -304,9 +297,7 @@
                             else if (text.includes('우회전') || text.includes('오른쪽')) command = 'd';
                             else if (text.includes('멈춰') || text.includes('정지')) command = 'x';
 
-                            if (command) {
-                                executeCommand(command);
-                            }
+                            if (command) executeCommand(command);
                         } else { interimTranscript += transcript; }
                     }
                     transcriptEl.innerHTML = finalTranscriptGlobal + `<span class="interim">${interimTranscript}</span>`;
@@ -318,13 +309,7 @@
                         isSpeechIntended = false; 
                         clearTimeout(restartTimer); 
                         if (isRecognizing) recognition.stop();
-                        else {
-                            speechStatusEl.textContent = '음성인식 대기 중'; 
-                            btnSpeech.textContent = '음성인식 시작'; 
-                            btnSpeech.classList.remove('recording'); 
-                        }
-                    } 
-                    else { 
+                    } else { 
                         isSpeechIntended = true; 
                         finalTranscriptGlobal = ''; 
                         transcriptEl.innerHTML = '<span style="color:#666;">듣고 있습니다...</span>'; 
